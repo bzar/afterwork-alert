@@ -2,20 +2,13 @@ const UntappdClient = require("node-untappd");
 const Slack = require('slack-node');
 const _ = require('lodash');
 const moment = require('moment');
-const https = require('https');
-const WebSocket = require('ws');
-const config = require('./config')[process.env.mode];
-const mockData = require('./config').mockData;
 
-// Definitions
 const clientId = [ config.clientId ];
 const clientSecret = [ config.clientSecret ];
 const accessToken = [ config.accessToken ];
-const loopingTime = config.loopingTime;
 const whatIsCountedAsAfterWork = config.whatIsCountedAsAfterWork;
 const whatIsCountedAfterPrevious = config.whatIsCountedAfterPrevious;
 const lookupuser = config.lookupuser;
-const slackApiToken = config.slackApiToken;
 const channels = config.channels;
 const botname = config.botname;
 const timeFormat = 'ddd, DD MMM YYYY HH:mm:ss +0000';
@@ -33,7 +26,7 @@ untappd.setClientId(clientId);
 untappd.setClientSecret(clientSecret);
 untappd.setAccessToken(accessToken); // TODO add accessToken adding LATER get accessToken
 // Create Slack Client
-var slack = new Slack(slackApiToken);
+var slack = new Slack(config.slackApiToken);
 
 function getUntappdFeed() {
   return new Promise((resolve, reject) => {
@@ -60,12 +53,6 @@ function getUntappdFeed() {
   });
 }
 
-function getMockFeed() {
-  return new Promise((resolve, reject) => {
-    return resolve(mockData);
-  });
-}
-
 function parseAfterworkers(feed) {
   log("feed: ", feed, "end of feed");
   return new Promise((resolve, reject) => {
@@ -78,7 +65,7 @@ function parseAfterworkers(feed) {
     afterwork = _.chain(feed)
       .sortBy((checkin) => moment(checkin.time, timeFormat))
       .filter((checkin) => {
-      log(checkin.name + ": " + moment(checkin.time, timeFormat).utc().toString());
+        log(checkin.name + ": " + moment(checkin.time, timeFormat).utc().toString());
         return moment(checkin.time, timeFormat).utc().isAfter(earliest_allowed_checkin) // Not too long time ago
           && (!usedCids.includes(checkin.cid)) // checkin id not used to another aw before
           && (checkin.vid); // has to have venue
@@ -129,7 +116,7 @@ function isCountedInAW(a, b) {
     : moment(a[a.length - 1].time, timeFormat).add(whatIsCountedAfterPrevious); // Previous added + maxTimeAfterPrevious
   var current = moment(b.time, timeFormat);
   if (current.isBetween(min, max)
-   && (a.find((checkin) => { return checkin.uid === b.uid }) === undefined)) {
+    && (a.find((checkin) => { return checkin.uid === b.uid }) === undefined)) {
     return true;
   }
   return false;
@@ -158,90 +145,12 @@ function buildPayloads(afterwork) {
   });
 }
 
-// Helper for starting to follow slack
-var followSlack = function () {
-  slack.api('rtm.start', function(err, response) {
-    // sendWelcomeMessage();
-    slack.api('auth.test', function(err, res) {
-      listenWebSocket(response.url, res.user_id);
-    });
-  });
-}
-
-// Send welcome message to all channels at slack
-var sendWelcomeMessage = function() {
-  Object.keys(channels).forEach(function(city) {
-    slack.api('chat.postMessage', {
-      text: 'Hei jos haluat minun kaveriksi lähetä kanavalle viesti: ```@seppokaljalla {untapdd-username}```',
-      channel: channels[city],
-      username: botname
-    }, function (err, res) {
-      log("res: ", res);
-    });
-  });
-}
-
-// WebSocker lisner
-var listenWebSocket = function (url, user_id) {
-  log("url: ", url);
-  log("user_id: ", user_id);
-  var ws = new WebSocket(url);
-
-  ws.on('message', function(message) {
-    log(message);
-    message = JSON.parse(message);
-    if (message.type === 'message' && message.subtype !== 'bot_message' && message.text !== undefined) {
-      if (message.text.indexOf(user_id) === 2 && message.text.split(' ').length === 2) { // index 2 is message begin and username for request
-        log("create friend request for ", message.text.split(' ')[1]);
-        createFriendRequest(message.text.split(' ')[1]);
-      }
-    }
-  });
-}
-
-// Create friend request from untappd
-var createFriendRequest = function (user) {
-  untappd.userInfo(function(err, obj){
-    log(obj.response.user);
-          
-    untappd.requestFriends(function (err, obj) {
-      log(obj);
-    }, {'TARGET_ID': obj.response.user.uid });
-
-  }, {"USERNAME" : user});
-}
-
-// Custom Slack Bot Stuff
-function startBot() {
-  log("Bot not yet done");
-};
-
-function log(...args) {
-  // could add here some real logging to file etc.
-  args.map((arg) => console.log(arg));
-}
-
-// Helper for interval
-var timer = function() {
-  // getMockFeed()
+exports.handler = (event, context, callback) => {
   getUntappdFeed()
     .then(parseAfterworkers)
     .then(buildPayloads)
-    .then((resolve, reject) => {
-      resolve.map((payload) => {
-/*        slack.api("chat.postMessage", payload, function (err, response) {
-          log("slack response: ", response);
-        })*/
-        log("resolve: ", payload);
-      });
+    .then((resove, reject) => {
+      log("resolve: ", payload);
     })
-    .catch((reason) => log("reason: ", reason));
+    .catch((reason) => log("reason: " , reason));
 }
-
-// Accual calls for start different parts of application
-exports.handler = (event, context, callback) => {
-  timer();
-}
-timer();
-// setInterval(timer, loopingTime * 1000 * 60);
-// followSlack();
